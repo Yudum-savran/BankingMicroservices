@@ -1,0 +1,295 @@
+version: '3.8'
+
+services:
+  # PostgreSQL - Account Service Database
+  postgres-account:
+    image: postgres:16-alpine
+    container_name: postgres-account
+    environment:
+      POSTGRES_DB: AccountDB
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: Admin123!
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-account-data:/var/lib/postgresql/data
+    networks:
+      - banking-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  
+
+  # PostgreSQL - Auth Service Database
+  postgres-auth:
+    image: postgres:16-alpine
+    container_name: postgres-auth
+    environment:
+      POSTGRES_DB: AuthDB
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: Admin123!
+    ports:
+      - "5435:5432"
+    volumes:
+      - postgres-auth-data:/var/lib/postgresql/data
+    networks:
+      - banking-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+
+ # PostgreSQL - Transaction DB
+  postgres-transaction:
+    image: postgres:16-alpine
+    container_name: postgres-transaction
+    environment:
+      POSTGRES_DB: TransactionDB
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: Admin123!
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres-transaction-data:/var/lib/postgresql/data
+    networks:
+      - banking-network
+
+
+  # PostgreSQL - Customer DB
+  postgres-customer:
+    image: postgres:16-alpine
+    container_name: postgres-customer
+    environment:
+      POSTGRES_DB: CustomerDB
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: Admin123!
+    ports:
+      - "5434:5432"
+    volumes:
+      - postgres-customer-data:/var/lib/postgresql/data
+    networks:
+      - banking-network
+
+  # Transaction Service
+  transaction-service:
+    build:
+      context: ./src/Services/Transaction
+      dockerfile: Transaction.API/Dockerfile
+    container_name: transaction-service
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:80
+      - ConnectionStrings__DefaultConnection=Host=postgres-transaction;Database=TransactionDB;Username=admin;Password=Admin123!
+      - RabbitMQ__Host=rabbitmq
+      - RabbitMQ__Username=admin
+      - RabbitMQ__Password=Admin123!
+    ports:
+      - "5002:80"
+    depends_on:
+      - postgres-transaction
+      - rabbitmq
+    networks:
+      - banking-network
+
+  # Customer Service
+  customer-service:
+    build:
+      context: ./src/Services/Customer
+      dockerfile: Customer.API/Dockerfile
+    container_name: customer-service
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:80
+      - ConnectionStrings__DefaultConnection=Host=postgres-customer;Database=CustomerDB;Username=admin;Password=Admin123!
+    ports:
+      - "5003:80"
+    depends_on:
+      - postgres-customer
+    networks:
+      - banking-network
+
+  # Notification Service
+  notification-service:
+    build:
+      context: ./src/Services/Notification
+      dockerfile: Notification.API/Dockerfile
+    container_name: notification-service
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:80
+      - RabbitMQ__Host=rabbitmq
+      - RabbitMQ__Username=admin
+      - RabbitMQ__Password=Admin123!
+    ports:
+      - "5005:80"
+    depends_on:
+      - rabbitmq
+    networks:
+      - banking-network
+
+
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: redis-cache
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes --requirepass Redis123!
+    volumes:
+      - redis-data:/data
+    networks:
+      - banking-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # RabbitMQ Message Broker
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: admin
+      RABBITMQ_DEFAULT_PASS: Admin123!
+    ports:
+      - "5672:5672"   # AMQP protocol
+      - "15672:15672" # Management UI
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    networks:
+      - banking-network
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Elasticsearch
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+    container_name: elasticsearch
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    ports:
+      - "9200:9200"
+      - "9300:9300"
+    volumes:
+      - elasticsearch-data:/usr/share/elasticsearch/data
+    networks:
+      - banking-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Kibana
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.11.0
+    container_name: kibana
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+    ports:
+      - "5601:5601"
+    depends_on:
+      - elasticsearch
+    networks:
+      - banking-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:5601/api/status || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Account Service
+  account-service:
+    build:
+      context: ./src/Services/Account
+      dockerfile: Account.API/Dockerfile
+    container_name: account-service
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:80
+      - ConnectionStrings__DefaultConnection=Host=postgres-account;Database=AccountDB;Username=admin;Password=Admin123!
+      - Redis__Configuration=redis:6379,password=Redis123!
+      - RabbitMQ__Host=rabbitmq
+      - RabbitMQ__Username=admin
+      - RabbitMQ__Password=Admin123!
+      - Elasticsearch__Uri=http://elasticsearch:9200
+    ports:
+      - "5001:80"
+    depends_on:
+      - postgres-account
+      - redis
+      - rabbitmq
+      - elasticsearch
+    networks:
+      - banking-network
+
+
+  # Auth Service
+  auth-service:
+    build:
+      context: src/Services/Auth/Auth.API
+      dockerfile: Dockerfile
+    container_name: auth-service
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:80
+      - ConnectionStrings__DefaultConnection=Host=postgres-auth;Database=AuthDB;Username=admin;Password=Admin123!
+      - Redis__Configuration=redis:6379,password=Redis123!
+      - JWT__Secret=YourSuperSecretKeyForJWTTokenGeneration123!
+      - JWT__Issuer=BankingSystem
+      - JWT__Audience=BankingClients
+      - JWT__ExpirationInMinutes=60
+    ports:
+      - "5004:80"
+    depends_on:
+      - postgres-auth
+      - redis
+    networks:
+      - banking-network
+
+ 
+
+  # API Gateway
+  api-gateway:
+    build:
+      context: ./src/ApiGateway
+      dockerfile: Dockerfile
+    container_name: api-gateway
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:80
+    ports:
+      - "5000:80"
+    depends_on:
+      - account-service
+      - transaction-service
+      - customer-service
+      - auth-service
+      - notification-service
+    networks:
+      - banking-network
+
+networks:
+  banking-network:
+    driver: bridge
+
+volumes:
+  postgres-account-data:
+  postgres-transaction-data:
+  postgres-customer-data:
+  postgres-auth-data:
+  redis-data:
+  rabbitmq-data:
+  elasticsearch-data:
