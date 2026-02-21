@@ -1,7 +1,6 @@
 using Account.Application.Services;
 using Account.Domain.Entities;
 using Account.Domain.Repositories;
-using Account.Domain.Exceptions;
 using MediatR;
 using Microsoft.Extensions.Logging;
 
@@ -70,15 +69,15 @@ public class CreateAccountCommandHandler : IRequestHandler<CreateAccountCommand,
                 Message = "Account created successfully"
             };
         }
-        catch (DomainException)
-        {
-            // Re-throw domain exceptions as-is
-            throw;
-        }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Unexpected error creating account for customer {CustomerId}", request.CustomerId);
-            throw new DomainException("An unexpected error occurred while creating the account.", "UNEXPECTED_ERROR");
+            _logger.LogError(ex, "Error creating account for customer {CustomerId}", request.CustomerId);
+            
+            return new CreateAccountResponse
+            {
+                Success = false,
+                Message = $"Error creating account: {ex.Message}"
+            };
         }
     }
 }
