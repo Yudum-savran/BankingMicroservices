@@ -7,6 +7,7 @@ using Account.Infrastructure.Logging;
 using Account.Infrastructure.MessageBus;
 using Account.Infrastructure.Persistence;
 using Account.Infrastructure.Persistence.Repositories;
+using Account.API.Middleware;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
@@ -14,6 +15,8 @@ using Microsoft.OpenApi.Models;
 using Serilog;
 using Serilog.Sinks.Elasticsearch;
 using StackExchange.Redis;
+using FluentValidation;
+using Account.Application.Behaviors;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -47,9 +50,16 @@ var redisConfiguration = builder.Configuration["Redis:Configuration"];
 builder.Services.AddSingleton<IConnectionMultiplexer>(sp =>
     ConnectionMultiplexer.Connect(redisConfiguration!));
 
-// Register MediatR for CQRS
-builder.Services.AddMediatR(cfg => 
-    cfg.RegisterServicesFromAssembly(typeof(CreateAccountCommandHandler).Assembly));
+// Register FluentValidation validators from Assembly
+builder.Services.AddValidatorsFromAssemblyContaining(typeof(Account.Application.Validators.CreateAccountCommandValidator));
+
+// Register MediatR for CQRS with validation pipeline behavior
+builder.Services.AddMediatR(cfg =>
+{
+    cfg.RegisterServicesFromAssembly(typeof(CreateAccountCommandHandler).Assembly);
+    // Add validation behavior to the pipeline
+    cfg.AddOpenBehavior(typeof(ValidationBehavior<,>));
+});
 
 // Register Repositories (DDD)
 builder.Services.AddScoped<IAccountRepository, AccountRepository>();
@@ -151,6 +161,9 @@ if (app.Environment.IsDevelopment())
         c.SwaggerEndpoint("/swagger/v1/swagger.json", "Account Service API v1");
     });
 }
+
+// Add global exception handling middleware BEFORE other middleware
+app.UseMiddleware<GlobalExceptionHandlingMiddleware>();
 
 app.UseCors("AllowAll");
 
