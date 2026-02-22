@@ -2,8 +2,10 @@
 
 using Account.Application.Services;
 using Account.Domain.Repositories;
+using Account.Domain.Exceptions;
 using MediatR;
 using Microsoft.Extensions.Logging;
+using AppInvalidOperationException = Account.Domain.Exceptions.InvalidOperationException;
 
 public class DepositMoneyCommandHandler
     : IRequestHandler<DepositMoneyCommand, DepositMoneyResponse>
@@ -29,32 +31,53 @@ public class DepositMoneyCommandHandler
         DepositMoneyCommand request,
         CancellationToken cancellationToken)
     {
-        var account = await _accountRepository
-            .GetByIdAsync(request.AccountId, cancellationToken);
-
-        if (account == null)
+        try
         {
+            _logger.LogInformation("Processing deposit for account {AccountId}, Amount: {Amount}", 
+                request.AccountId, request.Amount);
+
+            var account = await _accountRepository
+                .GetByIdAsync(request.AccountId, cancellationToken);
+
+            if (account == null)
+            {
+                _logger.LogWarning("Account {AccountId} not found for deposit operation", request.AccountId);
+                throw new NotFoundException("Account", request.AccountId);
+            }
+
+            account.Deposit(request.Amount, request.Description);
+
+            await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+            foreach (var e in account.DomainEvents)
+                await _eventBus.PublishAsync(e, cancellationToken);
+
+            account.ClearDomainEvents();
+
+            _logger.LogInformation("Deposit successful for account {AccountId}. New Balance: {Balance}", 
+                request.AccountId, account.Balance.Amount);
+
             return new DepositMoneyResponse
             {
-                Success = false,
-                Message = "Account not found"
+                Success = true,
+                NewBalance = account.Balance.Amount,
+                Message = "Deposit successful"
             };
         }
-
-        account.Deposit(request.Amount, request.Description);
-
-        await _unitOfWork.SaveChangesAsync(cancellationToken);
-
-        foreach (var e in account.DomainEvents)
-            await _eventBus.PublishAsync(e, cancellationToken);
-
-        account.ClearDomainEvents();
-
-        return new DepositMoneyResponse
+        catch (DomainException)
         {
-            Success = true,
-            NewBalance = account.Balance.Amount,
-            Message = "Deposit successful"
-        };
+            // Re-throw domain exceptions (including InvalidOperationException from domain logic)
+            throw;
+        }
+        catch (NotFoundException)
+        {
+            // Re-throw not found exceptions
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Unexpected error processing deposit for account {AccountId}", request.AccountId);
+            throw new AppInvalidOperationException("An unexpected error occurred while processing the deposit.", "DEPOSIT_ERROR");
+        }
     }
 }

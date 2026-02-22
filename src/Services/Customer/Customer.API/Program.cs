@@ -5,6 +5,9 @@ using System.Text;
 using Customer.Infrastructure.Persistence;
 using Customer.Infrastructure.Persistence.Repositories;
 using Customer.Domain.Repositories;
+using FluentValidation;
+using Customer.Application.Behaviors;
+using Customer.API.Middleware;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -19,8 +22,16 @@ builder.Services.AddDbContext<CustomerDbContext>(options =>
 builder.Services.AddScoped<ICustomerRepository, CustomerRepository>();
 builder.Services.AddScoped<IUnitOfWork, UnitOfWork>();
 
+// Register FluentValidation validators from Assembly
+builder.Services.AddValidatorsFromAssemblyContaining(typeof(Customer.Application.Validators.CreateCustomerCommandValidator));
+
+// Register MediatR for CQRS with validation pipeline behavior
 builder.Services.AddMediatR(cfg => 
-    cfg.RegisterServicesFromAssembly(typeof(Customer.Application.Commands.CreateCustomerCommand).Assembly));
+{
+    cfg.RegisterServicesFromAssembly(typeof(Customer.Application.Commands.CreateCustomerCommand).Assembly);
+    // Add validation behavior to the pipeline
+    cfg.AddOpenBehavior(typeof(ValidationBehavior<,>));
+});
 
 var jwtSecret = builder.Configuration["JWT:Secret"];
 var jwtIssuer = builder.Configuration["JWT:Issuer"];
@@ -59,6 +70,9 @@ using (var scope = app.Services.CreateScope())
     var db = scope.ServiceProvider.GetRequiredService<CustomerDbContext>();
     db.Database.Migrate();
 }
+
+// Add global exception handling middleware BEFORE other middleware
+app.UseMiddleware<GlobalExceptionHandlingMiddleware>();
 
 if (app.Environment.IsDevelopment())
 {

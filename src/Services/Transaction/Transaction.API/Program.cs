@@ -7,6 +7,9 @@ using Transaction.Infrastructure.Persistence.Repositories;
 using Transaction.Domain.Repositories;
 using Transaction.Application.EventHandlers;
 using Transaction.Infrastructure.MessageBus;
+using FluentValidation;
+using Transaction.Application.Behaviors;
+using Transaction.API.Middleware;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -27,9 +30,16 @@ builder.Services.AddScoped<IUnitOfWork, UnitOfWork>();
 // Event Handlers
 builder.Services.AddScoped<AccountEventHandler>();
 
-// MediatR
-builder.Services.AddMediatR(cfg => 
-    cfg.RegisterServicesFromAssembly(typeof(Transaction.Application.Queries.GetAccountTransactionsQuery).Assembly));
+// Register FluentValidation validators from Assembly
+builder.Services.AddValidatorsFromAssemblyContaining(typeof(Transaction.Application.Validators.GetAccountTransactionsQueryValidator));
+
+// MediatR with validation pipeline behavior
+builder.Services.AddMediatR(cfg =>
+{
+    cfg.RegisterServicesFromAssembly(typeof(Transaction.Application.Queries.GetAccountTransactionsQuery).Assembly);
+    // Add validation behavior to the pipeline
+    cfg.AddOpenBehavior(typeof(ValidationBehavior<,>));
+});
 
 // JWT Authentication
 var jwtSecret = builder.Configuration["JWT:Secret"];
@@ -87,6 +97,9 @@ using (var scope = app.Services.CreateScope())
 // Subscribe to RabbitMQ events
 var eventBus = app.Services.GetRequiredService<RabbitMQEventBus>();
 eventBus.SubscribeToAccountEvents();
+
+// Add global exception handling middleware BEFORE other middleware
+app.UseMiddleware<GlobalExceptionHandlingMiddleware>();
 
 // Configure the HTTP request pipeline
 if (app.Environment.IsDevelopment())

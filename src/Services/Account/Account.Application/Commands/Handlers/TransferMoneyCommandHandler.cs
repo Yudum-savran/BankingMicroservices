@@ -3,8 +3,10 @@
 using Account.Application.Commands;
 using Account.Application.Services;
 using Account.Domain.Repositories;
+using Account.Domain.Exceptions;
 using MediatR;
 using Microsoft.Extensions.Logging;
+using AppInvalidOperationException = Account.Domain.Exceptions.InvalidOperationException;
 
 public class TransferMoneyCommandHandler
     : IRequestHandler<TransferMoneyCommand, TransferMoneyResponse>
@@ -34,20 +36,28 @@ public class TransferMoneyCommandHandler
 
         try
         {
+            _logger.LogInformation(
+                "Processing transfer from account {SourceAccountId} to {TargetAccountId}, Amount: {Amount}",
+                request.SourceAccountId, request.TargetAccountId, request.Amount);
+
             var source = await _accountRepository
                 .GetByIdAsync(request.SourceAccountId, cancellationToken);
 
             var target = await _accountRepository
                 .GetByIdAsync(request.TargetAccountId, cancellationToken);
 
-            if (source == null || target == null)
+            if (source == null)
             {
                 await _unitOfWork.RollbackTransactionAsync(cancellationToken);
-                return new TransferMoneyResponse
-                {
-                    Success = false,
-                    Message = "Source or target account not found"
-                };
+                _logger.LogWarning("Source account {AccountId} not found for transfer operation", request.SourceAccountId);
+                throw new NotFoundException("Source Account", request.SourceAccountId);
+            }
+
+            if (target == null)
+            {
+                await _unitOfWork.RollbackTransactionAsync(cancellationToken);
+                _logger.LogWarning("Target account {AccountId} not found for transfer operation", request.TargetAccountId);
+                throw new NotFoundException("Target Account", request.TargetAccountId);
             }
 
             source.Transfer(request.Amount, request.TargetAccountId, request.Description);
@@ -62,6 +72,10 @@ public class TransferMoneyCommandHandler
             source.ClearDomainEvents();
             target.ClearDomainEvents();
 
+            _logger.LogInformation(
+                "Transfer successful from {SourceAccountId} to {TargetAccountId}. Source New Balance: {Balance}",
+                request.SourceAccountId, request.TargetAccountId, source.Balance.Amount);
+
             return new TransferMoneyResponse
             {
                 Success = true,
@@ -69,10 +83,25 @@ public class TransferMoneyCommandHandler
                 Message = "Transfer successful"
             };
         }
-        catch
+        catch (DomainException)
         {
+            // Re-throw domain exceptions (including InvalidOperationException from domain logic)
             await _unitOfWork.RollbackTransactionAsync(cancellationToken);
             throw;
+        }
+        catch (NotFoundException)
+        {
+            // Re-throw not found exceptions
+            await _unitOfWork.RollbackTransactionAsync(cancellationToken);
+            throw;
+        }
+        catch (Exception ex)
+        {
+            await _unitOfWork.RollbackTransactionAsync(cancellationToken);
+            _logger.LogError(ex,
+                "Unexpected error processing transfer from {SourceAccountId} to {TargetAccountId}",
+                request.SourceAccountId, request.TargetAccountId);
+            throw new AppInvalidOperationException("An unexpected error occurred while processing the transfer.", "TRANSFER_ERROR");
         }
     }
 }

@@ -1,6 +1,8 @@
 using Account.Domain.Common;
 using Account.Domain.Events;
 using Account.Domain.ValueObjects;
+using Account.Domain.Exceptions;
+using AppInvalidOperationException = Account.Domain.Exceptions.InvalidOperationException;
 
 namespace Account.Domain.Entities;
 
@@ -59,10 +61,10 @@ public class BankAccount : AggregateRoot
     public void Deposit(decimal amount, string description)
     {
         if (amount <= 0)
-            throw new InvalidOperationException("Deposit amount must be positive");
+            throw new AppInvalidOperationException("Deposit amount must be positive", "INVALID_DEPOSIT_AMOUNT");
 
         if (Status != AccountStatus.Active)
-            throw new InvalidOperationException("Account is not active");
+            throw new AppInvalidOperationException("Account is not active", "ACCOUNT_NOT_ACTIVE");
 
         Balance = Balance.Add(amount);
         LastTransactionDate = DateTime.UtcNow;
@@ -77,19 +79,19 @@ public class BankAccount : AggregateRoot
     public void Withdraw(decimal amount, string description)
     {
         if (amount <= 0)
-            throw new InvalidOperationException("Withdrawal amount must be positive");
+            throw new AppInvalidOperationException("Withdrawal amount must be positive", "INVALID_WITHDRAWAL_AMOUNT");
 
         if (Status != AccountStatus.Active)
-            throw new InvalidOperationException("Account is not active");
+            throw new AppInvalidOperationException("Account is not active", "ACCOUNT_NOT_ACTIVE");
 
         if (Balance.Amount < amount)
-            throw new InvalidOperationException("Insufficient balance");
+            throw new AppInvalidOperationException("Insufficient balance", "INSUFFICIENT_BALANCE");
 
         // Günlük limit kontrolü
         ResetDailyLimitIfNeeded();
 
         if (DailyWithdrawnAmount + amount > DailyWithdrawLimit)
-            throw new InvalidOperationException("Daily withdrawal limit exceeded");
+            throw new AppInvalidOperationException("Daily withdrawal limit exceeded", "DAILY_LIMIT_EXCEEDED");
 
         Balance = Balance.Subtract(amount);
         DailyWithdrawnAmount += amount;
@@ -117,7 +119,7 @@ public class BankAccount : AggregateRoot
     public void Block(string reason)
     {
         if (Status == AccountStatus.Blocked)
-            throw new InvalidOperationException("Account is already blocked");
+            throw new AppInvalidOperationException("Account is already blocked", "ACCOUNT_ALREADY_BLOCKED");
 
         Status = AccountStatus.Blocked;
 
@@ -127,7 +129,7 @@ public class BankAccount : AggregateRoot
     public void Unblock()
     {
         if (Status != AccountStatus.Blocked)
-            throw new InvalidOperationException("Account is not blocked");
+            throw new AppInvalidOperationException("Account is not blocked", "ACCOUNT_NOT_BLOCKED");
 
         Status = AccountStatus.Active;
 
@@ -137,7 +139,7 @@ public class BankAccount : AggregateRoot
     public void Close()
     {
         if (Balance.Amount != 0)
-            throw new InvalidOperationException("Cannot close account with non-zero balance");
+            throw new AppInvalidOperationException("Cannot close account with non-zero balance", "ACCOUNT_HAS_BALANCE");
 
         Status = AccountStatus.Closed;
 
